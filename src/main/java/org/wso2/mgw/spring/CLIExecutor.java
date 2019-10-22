@@ -1,12 +1,12 @@
 package org.wso2.mgw.spring;
 
+import io.swagger.v3.oas.models.OpenAPI;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.wso2.apimgt.gateway.cli.exception.CLIInternalException;
-import org.wso2.apimgt.gateway.cli.utils.CmdUtils;
-import org.wso2.mgw.spring.builders.OpenAPIBuilder;
 import org.wso2.mgw.spring.constants.CLIConstants;
 import org.wso2.mgw.spring.exception.CLIExecutorException;
+import org.wso2.mgw.spring.loggers.CLILogReader;
+import org.wso2.mgw.spring.utils.ConverterUtils;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -44,7 +44,7 @@ public class CLIExecutor {
      * @param apiBuilders relative paths of openAPI definitions stored in resources directory.
      * @throws CLIExecutorException
      */
-    public void generateFromDefinition(String project, List<OpenAPIBuilder> apiBuilders)
+    public void generateFromDefinition(String project, List<OpenAPI> apiBuilders)
             throws CLIExecutorException {
 
         createBackgroundEnv();
@@ -60,7 +60,7 @@ public class CLIExecutor {
         try {
             path = Files.createTempDirectory(new File(baseDir).toPath(), "userProject");
         } catch (IOException e) {
-            throw new CLIExecutorException("The directory " + baseDir + " doesnot exist.", e);
+            throw new CLIExecutorException("The directory " + baseDir + " does not exist.", e);
         }
         log.info("CLI Project Home: " + path.toString());
         System.setProperty(CLIConstants.CLI_HOME, this.cliHome);
@@ -95,26 +95,26 @@ public class CLIExecutor {
      * @param projectName   project name
      * @param apiDefinitions api Definition array as String
      */
-    private  void saveSwaggerDefinitions(String projectName, List<OpenAPIBuilder> apiDefinitions) throws CLIExecutorException{
+    private  void saveSwaggerDefinitions(String projectName, List<OpenAPI> apiDefinitions) throws CLIExecutorException{
         if (apiDefinitions.size() < 1) {
             throw new CLIExecutorException("No swagger definition is provided to generate API");
         }
         try {
-            Path genPath = Paths.get(CmdUtils.getProjectGenDirectoryPath(projectName));
-            Path apiDefPath = Paths.get(CmdUtils.getProjectGenAPIDefinitionPath(projectName));
+            Path genPath = Paths.get(getProjectGenDirectoryPath(projectName));
+            Path apiDefPath = Paths.get(getProjectGenAPIDefinitionPath(projectName));
             if (Files.notExists(genPath)) {
                 Files.createDirectory(genPath);
                 Files.createDirectory(apiDefPath);
             }
 
-            for(OpenAPIBuilder apiDefinition:apiDefinitions) {
+            for(OpenAPI apiDefinition:apiDefinitions) {
                 File desPath = new File(
                         homeDirectory + File.separator + projectName + File.separator +
-                                CLIConstants.PROJECT_API_DEFINITIONS_DIR + File.separator + apiDefinition.getOpenAPI().getInfo().getTitle()+ ".yaml");
-                writeContent(apiDefinition.getOpenAPIAsString(),  desPath);
+                                CLIConstants.PROJECT_API_DEFINITIONS_DIR + File.separator + apiDefinition.getInfo().getTitle()+ ".yaml");
+                writeContent(ConverterUtils.getOpenAPIAsString(apiDefinition),  desPath);
             }
         } catch (IOException e) {
-            throw new CLIInternalException("Error while copying the swagger to the project directory");
+            throw new CLIExecutorException("Error while copying the swagger to the project directory");
         }
     }
 
@@ -143,13 +143,15 @@ public class CLIExecutor {
         try {
             Process process = Runtime.getRuntime().exec(cmdArray, new String[] {"MICROGW_HOME=" + cliHome, "JAVA_HOME="
                     + System.getenv("JAVA_HOME")}, new File(homeDirectory));
+            new CLILogReader("errorStream", process.getErrorStream()).start();
+            new CLILogReader("inputStream", process.getInputStream()).start();
             boolean isCompleted = process.waitFor(2, TimeUnit.MINUTES);
             if (!isCompleted) {
                 throw new RuntimeException(errorMessage);
             }
             int processExitCode = process.exitValue();
             if (processExitCode != 0) {
-                throw new RuntimeException(errorMessage);
+                throw new CLIExecutorException(errorMessage);
             }
         } catch (IOException | InterruptedException e) {
             throw new CLIExecutorException(errorMessage, e);
@@ -179,4 +181,53 @@ public class CLIExecutor {
             writer.flush();
         }
     }
+
+    /**
+     * Returns path to the /gen of a given project in the current working directory
+     *
+     * @param projectName name of the project
+     * @return path to the /src of a given project in the current working directory
+     */
+    private String getProjectGenDirectoryPath(String projectName) {
+        return getProjectDirectoryPath(projectName) + File.separator
+                + CLIConstants.PROJECT_GEN_DIR;
+    }
+
+    /**
+     * Returns path to the given project in the current working directory
+     *
+     * @param projectName name of the project
+     * @return path to the given project in the current working directory
+     */
+    private  String getProjectDirectoryPath(String projectName) {
+        return getUserDir() + File.separator + projectName;
+    }
+
+    /**
+     * Returns current user dir
+     *
+     * @return current user dir
+     */
+    public static String getUserDir() {
+        String currentDirProp = System.getProperty(CLIConstants.SYS_PROP_CURRENT_DIR);
+        if (currentDirProp != null) {
+            return currentDirProp;
+        } else {
+            return System.getProperty(CLIConstants.SYS_PROP_USER_DIR);
+        }
+    }
+
+    /**
+     * Returns path to the /gen/api-definition of a given project in the current working directory
+     *
+     * @param projectName name of the project
+     * @return path to the /gen/api-definition of a given project in the current working directory
+     */
+    private String getProjectGenAPIDefinitionPath(String projectName) {
+        return getProjectDirectoryPath(projectName) + File.separator +
+                CLIConstants.PROJECT_GEN_DIR + File.separator +
+                CLIConstants.PROJECT_API_DEFINITIONS_DIR;
+    }
+
+
 }
