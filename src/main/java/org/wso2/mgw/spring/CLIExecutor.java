@@ -52,13 +52,14 @@ public class CLIExecutor {
         runInitCmd(mgwCommand, project);
         saveSwaggerDefinitions(project, apiBuilders);
         runBuildCmd(mgwCommand, project);
+        copyJarToTarget(project);
     }
 
     private void createBackgroundEnv() throws CLIExecutorException {
         String baseDir = (System.getProperty(CLIConstants.SYSTEM_PROP_BASE_DIR, ".")) + File.separator + "target";
         Path path;
         try {
-            path = Files.createTempDirectory(new File(baseDir).toPath(), "userProject");
+            path = Files.createTempDirectory(new File(baseDir).toPath(), CLIConstants.SAMPLE_PROJECT_NAME);
         } catch (IOException e) {
             throw new CLIExecutorException("The directory " + baseDir + " does not exist.", e);
         }
@@ -181,6 +182,19 @@ public class CLIExecutor {
             writer.flush();
         }
     }
+
+    private void copyJarToTarget(String projectName) throws CLIExecutorException {
+        String jarName = projectName + CLIConstants.JAR_EXTENSION;
+        Path jarPath = Paths.get(getProjectDirectoryPath(projectName) +
+                File.separator + CLIConstants.PROJECT_TARGET_DIR + File.separator + jarName);
+        Path destinationPath = Paths.get("./target" + File.separator + jarName);
+        try {
+            Files.copy(jarPath, destinationPath);
+        } catch (IOException e) {
+            throw new CLIExecutorException("Error while copying the jar to the target directory", e);
+        }
+    }
+
 
     /**
      * Returns path to the /gen of a given project in the current working directory

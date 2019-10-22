@@ -1,6 +1,7 @@
 package org.wso2.mgw.spring.builders;
 
 import io.swagger.v3.oas.models.OpenAPI;
+import io.swagger.v3.parser.OpenAPIV3Parser;
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
 import org.apache.maven.project.MavenProject;
 import org.reflections.Reflections;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.wso2.mgw.spring.constants.PluginConstants;
 import org.wso2.mgw.spring.exception.OpenAPIBuilderException;
 import org.wso2.mgw.spring.mappers.OpenAPIServiceMapper;
+import org.wso2.mgw.spring.models.ConfigModel;
 
 import java.io.File;
 import java.io.IOException;
@@ -31,22 +33,37 @@ import java.util.Set;
 public class OpenAPIBuilder {
     private static final Logger log = LoggerFactory.getLogger(OpenAPIBuilder.class);
 
-    protected String packageName;
-    protected Reflections reflections;
-    protected MavenProject mavenProject;
-    protected Properties projectProperties = new Properties();
+    private String packageName;
+    private Reflections reflections;
+    private MavenProject mavenProject;
+    private Properties projectProperties = new Properties();
+    private String openAPIFileName;
+    private boolean processProject;
 
-    protected OpenAPIBuilder() {
-    }
-
-    public OpenAPIBuilder(String packageName, MavenProject project) throws OpenAPIBuilderException {
-        this.packageName = packageName;
+    public OpenAPIBuilder(MavenProject project, ConfigModel configModel) throws OpenAPIBuilderException {
+        this.packageName = configModel.getPackageName();
         this.mavenProject = project;
+        this.processProject = configModel.isProcessProject();
+        this.openAPIFileName = configModel.getOpenAPIName();
         initReflections();
     }
 
-    public List<OpenAPI> generate() {
+    public List<OpenAPI> generate() throws OpenAPIBuilderException {
         List<OpenAPI> openAPIList = new ArrayList<>();
+        if (this.openAPIFileName != null) {
+            OpenAPIServiceMapper openAPIServiceMapper = new OpenAPIServiceMapper(getOpenAPIFromFile(), mavenProject,
+                    projectProperties);
+            openAPIList.add(openAPIServiceMapper.getOpenAPI());
+            if (processProject) {
+                addSpringServicesAsOpenAPIs(openAPIList);
+            }
+        } else {
+            addSpringServicesAsOpenAPIs(openAPIList);
+        }
+        return openAPIList;
+    }
+
+    private void addSpringServicesAsOpenAPIs(List<OpenAPI> openAPIList) {
         Set<Class<?>> classes = getSpringServiceClasses();
         for (Class<?> cl : classes) {
             RequestMapping findable = cl.getAnnotation(RequestMapping.class);
@@ -56,7 +73,6 @@ public class OpenAPIBuilder {
             System.out.println(openAPIServiceMapper.getOpenAPIAsString());
             openAPIList.add(openAPIServiceMapper.getOpenAPI());
         }
-        return openAPIList;
     }
 
     private ClassLoader getClassLoaderForProjectClasses() throws OpenAPIBuilderException {
@@ -95,6 +111,12 @@ public class OpenAPIBuilder {
             log.warn(message, e.getMessage());
             log.debug(message, e);
         }
+    }
+
+    private OpenAPI getOpenAPIFromFile() throws OpenAPIBuilderException {
+        ClassLoader newLoader = getClassLoaderForProjectClasses();
+        OpenAPI openAPI = new OpenAPIV3Parser().read(newLoader.getResource(openAPIFileName).getPath());
+        return openAPI;
     }
 
     private Set<Class<?>> getSpringServiceClasses() {

@@ -46,6 +46,12 @@ public class OpenAPIServiceMapper {
         generateOpenAPI();
     }
 
+    public OpenAPIServiceMapper(OpenAPI openAPI, MavenProject project, Properties projectProperties) {
+        this.openAPI = openAPI;
+        this.mavenProject = project;
+        this.projectProperties = projectProperties;
+    }
+
     private void generateOpenAPI() {
         String basePath = getServiceBasePath();
         openAPI = new OpenAPI();

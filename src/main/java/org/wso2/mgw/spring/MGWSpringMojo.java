@@ -11,6 +11,7 @@ import org.wso2.mgw.spring.builders.OpenAPIBuilder;
 import org.wso2.mgw.spring.constants.CLIConstants;
 import org.wso2.mgw.spring.exception.CLIExecutorException;
 import org.wso2.mgw.spring.exception.OpenAPIBuilderException;
+import org.wso2.mgw.spring.models.ConfigModel;
 
 import java.util.List;
 
@@ -19,11 +20,11 @@ public class MGWSpringMojo extends AbstractMojo {
 
     private Log log = getLog();
 
-    @Parameter( property = "packageName")
-    private String packageName;
-
     @Parameter( property = "toolkitHome")
     private String toolkitHome;
+
+    @Parameter( property = "buildProject")
+    private ConfigModel buildProject;
 
     /**
      * @parameter expression="${project}"
@@ -36,11 +37,15 @@ public class MGWSpringMojo extends AbstractMojo {
     public void execute() throws MojoExecutionException
     {
         System.setProperty(CLIConstants.SYSTEM_PROP_TOOLKIT, toolkitHome);
+        if (buildProject.getOpenAPIName() == null && buildProject.getPackageName() == null) {
+            throw new MojoExecutionException(
+                    "Either packageName or openAPIName should present in the plugin configurations");
+        }
         try {
-            OpenAPIBuilder openAPIBuilder = new OpenAPIBuilder(packageName, project);
+            OpenAPIBuilder openAPIBuilder = new OpenAPIBuilder(project, buildProject);
             List<OpenAPI> openAPIList = openAPIBuilder.generate();
             CLIExecutor cliExecutor = CLIExecutor.getInstance();
-            cliExecutor.generateFromDefinition("Sample", openAPIList);
+            cliExecutor.generateFromDefinition(project.getName() != null ? project.getName(): project.getArtifactId(), openAPIList);
         } catch (CLIExecutorException | OpenAPIBuilderException e) {
             String message = "Error while building micro gateway for the spring service";
             log.error(message + " : " + e.getMessage());
