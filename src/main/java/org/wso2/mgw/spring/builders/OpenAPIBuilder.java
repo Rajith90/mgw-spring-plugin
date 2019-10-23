@@ -66,8 +66,8 @@ public class OpenAPIBuilder {
     private void addSpringServicesAsOpenAPIs(List<OpenAPI> openAPIList) {
         Set<Class<?>> classes = getSpringServiceClasses();
         for (Class<?> cl : classes) {
-            RequestMapping findable = cl.getAnnotation(RequestMapping.class);
-            System.out.printf("Found class: %s, with meta name: %s%n", cl.getSimpleName(), findable.name());
+            //RequestMapping findable = cl.getAnnotation(RequestMapping.class);
+            //System.out.printf("Found class: %s, with meta name: %s%n", cl.getSimpleName(), findable.name());
             OpenAPIServiceMapper openAPIServiceMapper = new OpenAPIServiceMapper(reflections, mavenProject,
                     projectProperties, cl);
             System.out.println(openAPIServiceMapper.getOpenAPIAsString());
