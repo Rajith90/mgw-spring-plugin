@@ -38,3 +38,4 @@ Then add the following plugin for the spring project.
 | `buildProject`  | `openAPIName`        | The name of the open API file present in the project resources directory. If provided these endpoint also will be added to micro gateway |
 |                 | `packageName`        | The root package name of the spring project in which the REST services are defined |
 |                 | `processProject`     | If the `openAPIName` is provided, then spring project will only be processed if this is set to `true`. If `openAPIName` is not provided then irrespective of this value spring project will be processed to build the gateway |
+|                 | `isExtendedOpenAPI`  | Builds the open API definition for project with adding response schema objects and etc 

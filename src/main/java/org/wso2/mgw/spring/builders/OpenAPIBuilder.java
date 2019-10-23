@@ -12,7 +12,7 @@ import org.reflections.util.ClasspathHelper;
 import org.reflections.util.ConfigurationBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.RestController;
 import org.wso2.mgw.spring.constants.PluginConstants;
 import org.wso2.mgw.spring.exception.OpenAPIBuilderException;
@@ -21,6 +21,7 @@ import org.wso2.mgw.spring.models.ConfigModel;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLClassLoader;
@@ -39,19 +40,22 @@ public class OpenAPIBuilder {
     private Properties projectProperties = new Properties();
     private String openAPIFileName;
     private boolean processProject;
+    private boolean isExtendedOpenAPI;
 
     public OpenAPIBuilder(MavenProject project, ConfigModel configModel) throws OpenAPIBuilderException {
         this.packageName = configModel.getPackageName();
         this.mavenProject = project;
         this.processProject = configModel.isProcessProject();
         this.openAPIFileName = configModel.getOpenAPIName();
+        this.isExtendedOpenAPI = configModel.isExtendedOpenAPI();
         initReflections();
     }
 
     public List<OpenAPI> generate() throws OpenAPIBuilderException {
         List<OpenAPI> openAPIList = new ArrayList<>();
-        if (this.openAPIFileName != null) {
-            OpenAPIServiceMapper openAPIServiceMapper = new OpenAPIServiceMapper(getOpenAPIFromFile(), mavenProject,
+        OpenAPI openAPI;
+        if (this.openAPIFileName != null && (openAPI = getOpenAPIFromFile()) != null) {
+            OpenAPIServiceMapper openAPIServiceMapper = new OpenAPIServiceMapper(openAPI, mavenProject,
                     projectProperties);
             openAPIList.add(openAPIServiceMapper.getOpenAPI());
             if (processProject) {
@@ -66,10 +70,8 @@ public class OpenAPIBuilder {
     private void addSpringServicesAsOpenAPIs(List<OpenAPI> openAPIList) {
         Set<Class<?>> classes = getSpringServiceClasses();
         for (Class<?> cl : classes) {
-            //RequestMapping findable = cl.getAnnotation(RequestMapping.class);
-            //System.out.printf("Found class: %s, with meta name: %s%n", cl.getSimpleName(), findable.name());
             OpenAPIServiceMapper openAPIServiceMapper = new OpenAPIServiceMapper(reflections, mavenProject,
-                    projectProperties, cl);
+                    projectProperties, cl, isExtendedOpenAPI);
             System.out.println(openAPIServiceMapper.getOpenAPIAsString());
             openAPIList.add(openAPIServiceMapper.getOpenAPI());
         }
@@ -103,8 +105,10 @@ public class OpenAPIBuilder {
         Collection<URL> urls = ClasspathHelper.forPackage(packageName, newLoader);
         reflections = new Reflections(new ConfigurationBuilder().setUrls(urls).addClassLoader(newLoader)
                 .setScanners(new MethodAnnotationsScanner(), new TypeAnnotationsScanner(), new SubTypesScanner()));
-        try {
-            projectProperties.load(newLoader.getResourceAsStream(PluginConstants.APPLICATION_PROPERTIES_FILE));
+        try (InputStream in = newLoader.getResourceAsStream(PluginConstants.APPLICATION_PROPERTIES_FILE)) {
+            if(in != null) {
+                projectProperties.load(newLoader.getResourceAsStream(PluginConstants.APPLICATION_PROPERTIES_FILE));
+            }
         } catch (IOException e) {
             String message =
                     "Error while reading the spring project " + PluginConstants.APPLICATION_PROPERTIES_FILE + " file";
@@ -114,13 +118,20 @@ public class OpenAPIBuilder {
     }
 
     private OpenAPI getOpenAPIFromFile() throws OpenAPIBuilderException {
+        OpenAPI openAPI = null;
         ClassLoader newLoader = getClassLoaderForProjectClasses();
-        OpenAPI openAPI = new OpenAPIV3Parser().read(newLoader.getResource(openAPIFileName).getPath());
+        if(newLoader.getResource(openAPIFileName) != null) {
+            openAPI = new OpenAPIV3Parser().read(newLoader.getResource(openAPIFileName).getPath());
+        } else {
+            log.warn("'" + openAPIFileName + "' does not exists in project resources directory");
+        }
         return openAPI;
     }
 
     private Set<Class<?>> getSpringServiceClasses() {
-        return reflections.getTypesAnnotatedWith(RestController.class);
+        Set<Class<?>> restAnnotatedClasses = reflections.getTypesAnnotatedWith(RestController.class);
+        restAnnotatedClasses.addAll(reflections.getTypesAnnotatedWith(Controller.class));
+        return restAnnotatedClasses;
     }
 
 }

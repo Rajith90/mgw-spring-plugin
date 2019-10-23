@@ -4,6 +4,7 @@ public class ConfigModel {
     String openAPIName;
     boolean processProject;
     String packageName;
+    boolean isExtendedOpenAPI;
 
     public String getOpenAPIName() {
         return openAPIName;
@@ -27,5 +28,13 @@ public class ConfigModel {
 
     public void setPackageName(String packageName) {
         this.packageName = packageName;
+    }
+
+    public boolean isExtendedOpenAPI() {
+        return isExtendedOpenAPI;
+    }
+
+    public void setExtendedOpenAPI(boolean extendedOpenAPI) {
+        isExtendedOpenAPI = extendedOpenAPI;
     }
 }

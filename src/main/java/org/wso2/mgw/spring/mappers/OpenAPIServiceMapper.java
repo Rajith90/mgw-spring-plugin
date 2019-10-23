@@ -36,13 +36,15 @@ public class OpenAPIServiceMapper {
     private Reflections reflections;
     private MavenProject mavenProject;
     private Properties projectProperties;
+    private boolean isExtendedOpenAPI;
 
     public OpenAPIServiceMapper(Reflections reflections, MavenProject project, Properties projectProperties,
-            Class<?> serviceClass) {
+            Class<?> serviceClass, boolean isExtendedOpenAPI) {
         this.serviceClass = serviceClass;
         this.reflections = reflections;
         this.mavenProject = project;
         this.projectProperties = projectProperties;
+        this.isExtendedOpenAPI = isExtendedOpenAPI;
         generateOpenAPI();
     }
 
@@ -107,7 +109,10 @@ public class OpenAPIServiceMapper {
                 resourceMapperModel = buildRequestMapperFromPatch(method.getAnnotation(PatchMapping.class));
             }
             OpenAPIResourceMapper openAPIResourceMapper = new OpenAPIResourceMapper(resourceMapperModel);
-            Schema schema = setSchemasToComponents(method);
+            Schema schema = null;
+            if(isExtendedOpenAPI) {
+                schema = setSchemasToComponents(method);
+            }
             openAPIResourceMapper.addOrUpdatePathToOpenAPI(openAPI, schema);
 
         }));

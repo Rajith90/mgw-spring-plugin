@@ -85,15 +85,17 @@ class OpenAPIResourceMapper {
         ApiResponse apiResponse = new ApiResponse();
         apiResponse.description("OK");
         apiResponses.addApiResponse("200", apiResponse);
-        Content content = new Content();
-        if (resourceMapperModel.getProduces() != null && resourceMapperModel.getProduces().length > 0) {
-            for (String produce : resourceMapperModel.getProduces()) {
-                MediaType mediaType = new MediaType().schema(schema);
-                content.addMediaType(produce, mediaType);
+        if(schema != null) {
+            Content content = new Content();
+            if (resourceMapperModel.getProduces() != null && resourceMapperModel.getProduces().length > 0) {
+                for (String produce : resourceMapperModel.getProduces()) {
+                    MediaType mediaType = new MediaType().schema(schema);
+                    content.addMediaType(produce, mediaType);
+                }
+                apiResponse.setContent(content);
+            } else {
+                apiResponse.set$ref(schema.get$ref());
             }
-            apiResponse.setContent(content);
-        } else {
-            apiResponse.set$ref(schema.get$ref());
         }
 
         operation.setResponses(apiResponses);
