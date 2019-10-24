@@ -12,7 +12,9 @@ import io.swagger.v3.oas.models.responses.ApiResponse;
 import io.swagger.v3.oas.models.responses.ApiResponses;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.wso2.mgw.spring.models.ResourceMapperModel;
+import org.wso2.mgw.spring.utils.ConverterUtils;
 
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
@@ -22,9 +24,11 @@ class OpenAPIResourceMapper {
 
     private static final Pattern CURLY_BRACES_PATTERN = Pattern.compile("(?<=\\{)(?!\\s*\\{)[^{}]+");
     private ResourceMapperModel resourceMapperModel;
+    private Method method;
 
-    OpenAPIResourceMapper(ResourceMapperModel resourceMapperModel) {
+    OpenAPIResourceMapper(ResourceMapperModel resourceMapperModel, Method method) {
         this.resourceMapperModel = resourceMapperModel;
+        this.method = method;
     }
 
     /**
@@ -79,6 +83,7 @@ class OpenAPIResourceMapper {
      */
     private Operation createOperation(String servicePath, Schema schema) {
         Operation operation = new Operation();
+        operation.setOperationId(method.getName() + servicePath.replaceAll("/", "_"));
         populatePathParameters(operation, servicePath);
 
         ApiResponses apiResponses = new ApiResponses();
@@ -92,6 +97,10 @@ class OpenAPIResourceMapper {
                     MediaType mediaType = new MediaType().schema(schema);
                     content.addMediaType(produce, mediaType);
                 }
+                apiResponse.setContent(content);
+            } else if(ConverterUtils.isPrimitive(schema.getType())) {
+                MediaType mediaType = new MediaType().schema(schema);
+                content.addMediaType("text/plain", mediaType);
                 apiResponse.setContent(content);
             } else {
                 apiResponse.set$ref(schema.get$ref());

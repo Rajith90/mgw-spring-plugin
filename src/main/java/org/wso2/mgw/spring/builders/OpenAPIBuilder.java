@@ -13,6 +13,7 @@ import org.reflections.util.ConfigurationBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.wso2.mgw.spring.constants.PluginConstants;
 import org.wso2.mgw.spring.exception.OpenAPIBuilderException;
@@ -27,6 +28,7 @@ import java.net.URL;
 import java.net.URLClassLoader;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Properties;
 import java.util.Set;
@@ -69,6 +71,13 @@ public class OpenAPIBuilder {
 
     private void addSpringServicesAsOpenAPIs(List<OpenAPI> openAPIList) {
         Set<Class<?>> classes = getSpringServiceClasses();
+        Set<Class<?>> compositeClasses = getCompositeClasses(classes);
+        classes.removeAll(compositeClasses);
+        if (compositeClasses.size() > 0) {
+            OpenAPIServiceMapper openAPIServiceMapper = new OpenAPIServiceMapper(reflections, mavenProject,
+                    projectProperties, compositeClasses, isExtendedOpenAPI);
+            openAPIList.add(openAPIServiceMapper.getOpenAPI());
+        }
         for (Class<?> cl : classes) {
             OpenAPIServiceMapper openAPIServiceMapper = new OpenAPIServiceMapper(reflections, mavenProject,
                     projectProperties, cl, isExtendedOpenAPI);
@@ -106,7 +115,7 @@ public class OpenAPIBuilder {
         reflections = new Reflections(new ConfigurationBuilder().setUrls(urls).addClassLoader(newLoader)
                 .setScanners(new MethodAnnotationsScanner(), new TypeAnnotationsScanner(), new SubTypesScanner()));
         try (InputStream in = newLoader.getResourceAsStream(PluginConstants.APPLICATION_PROPERTIES_FILE)) {
-            if(in != null) {
+            if (in != null) {
                 projectProperties.load(newLoader.getResourceAsStream(PluginConstants.APPLICATION_PROPERTIES_FILE));
             }
         } catch (IOException e) {
@@ -120,7 +129,7 @@ public class OpenAPIBuilder {
     private OpenAPI getOpenAPIFromFile() throws OpenAPIBuilderException {
         OpenAPI openAPI = null;
         ClassLoader newLoader = getClassLoaderForProjectClasses();
-        if(newLoader.getResource(openAPIFileName) != null) {
+        if (newLoader.getResource(openAPIFileName) != null) {
             openAPI = new OpenAPIV3Parser().read(newLoader.getResource(openAPIFileName).getPath());
         } else {
             log.warn("'" + openAPIFileName + "' does not exists in project resources directory");
@@ -132,6 +141,18 @@ public class OpenAPIBuilder {
         Set<Class<?>> restAnnotatedClasses = reflections.getTypesAnnotatedWith(RestController.class);
         restAnnotatedClasses.addAll(reflections.getTypesAnnotatedWith(Controller.class));
         return restAnnotatedClasses;
+    }
+
+    private Set<Class<?>> getCompositeClasses(Set<Class<?>> classes) {
+        Set<Class<?>> compositeClasses = new HashSet<>();
+        classes.forEach(springClass -> {
+            RequestMapping requestMappingAnnotation = springClass.getAnnotation(RequestMapping.class);
+            if ((requestMappingAnnotation == null) || (requestMappingAnnotation != null
+                    && requestMappingAnnotation.value().length == 0)) {
+                compositeClasses.add(springClass);
+            }
+        });
+        return compositeClasses;
     }
 
 }

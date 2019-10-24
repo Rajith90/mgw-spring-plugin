@@ -1,10 +1,14 @@
 package org.wso2.mgw.spring.mappers;
 
+import io.swagger.models.properties.Property;
+import io.swagger.v3.core.converter.ModelConverters;
+import io.swagger.v3.core.converter.ResolvedSchema;
 import io.swagger.v3.core.util.Yaml;
 import io.swagger.v3.oas.models.Components;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Info;
 import io.swagger.v3.oas.models.media.Schema;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.maven.project.MavenProject;
 import org.reflections.Reflections;
 import org.slf4j.Logger;
@@ -19,20 +23,22 @@ import org.springframework.web.bind.annotation.RequestMethod;
 import org.wso2.mgw.spring.RequestMethodType;
 import org.wso2.mgw.spring.constants.PluginConstants;
 import org.wso2.mgw.spring.models.ResourceMapperModel;
+import org.wso2.mgw.spring.utils.ConverterUtils;
 
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 public class OpenAPIServiceMapper {
     private static final Logger log = LoggerFactory.getLogger(OpenAPIServiceMapper.class);
 
     private OpenAPI openAPI;
     private Class<?> serviceClass;
+    private Set<Class<?>> compositeServiceClasses;
     private Reflections reflections;
     private MavenProject mavenProject;
     private Properties projectProperties;
@@ -41,6 +47,16 @@ public class OpenAPIServiceMapper {
     public OpenAPIServiceMapper(Reflections reflections, MavenProject project, Properties projectProperties,
             Class<?> serviceClass, boolean isExtendedOpenAPI) {
         this.serviceClass = serviceClass;
+        this.reflections = reflections;
+        this.mavenProject = project;
+        this.projectProperties = projectProperties;
+        this.isExtendedOpenAPI = isExtendedOpenAPI;
+        generateOpenAPI();
+    }
+
+    public OpenAPIServiceMapper(Reflections reflections, MavenProject project, Properties projectProperties,
+            Set<Class<?>> serviceClasses, boolean isExtendedOpenAPI) {
+        this.compositeServiceClasses = serviceClasses;
         this.reflections = reflections;
         this.mavenProject = project;
         this.projectProperties = projectProperties;
@@ -58,7 +74,11 @@ public class OpenAPIServiceMapper {
         String basePath = getServiceBasePath();
         openAPI = new OpenAPI();
         Info info = new Info();
-        info.setTitle(serviceClass.getSimpleName());
+        if(serviceClass != null) {
+            info.setTitle(serviceClass.getSimpleName());
+        } else {
+            info.setTitle(mavenProject.getName());
+        }
         if (mavenProject != null) {
             info.setDescription(mavenProject.getDescription());
             info.setVersion(mavenProject.getVersion());
@@ -76,16 +96,23 @@ public class OpenAPIServiceMapper {
     }
 
     private String getServiceBasePath() {
-        RequestMapping requestMappingAnnotation = serviceClass.getAnnotation(RequestMapping.class);
-        if (requestMappingAnnotation != null) {
-            return requestMappingAnnotation.value()[0];
+        if (serviceClass != null) {
+            RequestMapping requestMappingAnnotation = serviceClass.getAnnotation(RequestMapping.class);
+            if (requestMappingAnnotation != null) {
+                return requestMappingAnnotation.value()[0];
+            }
         }
         return "/";
     }
 
     private void setServicePathsToOpenAPI() {
 
-        Map<RequestMethodType, Set<Method>> operationsMap = getMethodsWithResourceMappings();
+        Map<RequestMethodType, Set<Method>> operationsMap;
+        if (compositeServiceClasses != null) {
+            operationsMap = getMethodsWithResourceMappingsForCompositeService();
+        } else {
+            operationsMap = getMethodsWithResourceMappings();
+        }
 
         operationsMap.forEach((key, methods) -> methods.forEach(method -> {
             ResourceMapperModel resourceMapperModel = null;
@@ -108,15 +135,14 @@ public class OpenAPIServiceMapper {
             case PATCH:
                 resourceMapperModel = buildRequestMapperFromPatch(method.getAnnotation(PatchMapping.class));
             }
-            OpenAPIResourceMapper openAPIResourceMapper = new OpenAPIResourceMapper(resourceMapperModel);
+            OpenAPIResourceMapper openAPIResourceMapper = new OpenAPIResourceMapper(resourceMapperModel, method);
             Schema schema = null;
-            if(isExtendedOpenAPI) {
+            if (isExtendedOpenAPI) {
                 schema = setSchemasToComponents(method);
             }
             openAPIResourceMapper.addOrUpdatePathToOpenAPI(openAPI, schema);
 
         }));
-
     }
 
     private Schema setSchemasToComponents(Method method) {
@@ -126,69 +152,101 @@ public class OpenAPIServiceMapper {
             openAPI.setComponents(components);
         }
         Schema schema = new Schema();
-        if (method.getReturnType().isPrimitive() || method.getReturnType().equals(String.class)) {
-            schema.setType(method.getReturnType().getSimpleName());
+        if (Collection.class.isAssignableFrom(method.getReturnType())) {
+            ResolvedSchema resolvedSchema = ModelConverters.getInstance()
+                    .readAllAsResolvedSchema(method.getGenericReturnType());
+            schema.setType(PluginConstants.ARRAY_TYPE);
+            schema.setProperties(resolvedSchema.referencedSchemas);
+            String refName = resolveCollectionGenericType(method);
+            openAPI.getComponents().addSchemas(refName, schema);
+            Schema refSchema = new Schema();
+            refSchema.setType(refName);
+            refSchema.set$ref(refName);
+            return refSchema;
+        } else if (ConverterUtils.isPrimitive(method.getReturnType())) {
+            Property property = io.swagger.converter.ModelConverters.getInstance()
+                    .readAsProperty(method.getReturnType());
+            schema.setType(property.getType());
             return schema;
         } else {
-            components.addSchemas(method.getReturnType().getSimpleName(),
-                    setComponentsToOpenAPI(schema, method.getReturnType().getDeclaredFields()));
-            openAPI.setComponents(components);
+            ResolvedSchema resolvedSchema = ModelConverters.getInstance()
+                    .readAllAsResolvedSchema(method.getReturnType());
+            openAPI.getComponents().addSchemas(method.getReturnType().getSimpleName(), resolvedSchema.schema);
+            resolvedSchema.referencedSchemas.forEach((key, value) -> {
+                openAPI.getComponents().addSchemas(key, value);
+            });
             Schema refSchema = new Schema();
             refSchema.set$ref(method.getReturnType().getSimpleName());
             return refSchema;
         }
     }
 
-    private Schema setComponentsToOpenAPI(Schema schema, Field[] fields) {
-
-        for (Field field : fields) {
-            if (Modifier.isPrivate(field.getModifiers())) {
-                field.setAccessible(true);
-            }
-            Schema subSchema = new Schema();
-            if (field.getType().isPrimitive() || field.getType().equals(String.class)) {
-                subSchema.setType(resolveBasicDataType(field.getType().getSimpleName()));
-                schema.addProperties(field.getName(), subSchema);
-            } else if(field.getType().isArray()) {
-                subSchema.setType(PluginConstants.ARRAY_TYPE);
-                setComponentsToOpenAPI(subSchema, field.getType().getComponentType().getDeclaredFields());
-                openAPI.getComponents().addSchemas(field.getType().getComponentType().getSimpleName(),subSchema);
-                Schema refSchema = new Schema();
-                refSchema.setType(field.getType().getComponentType().getSimpleName());
-                refSchema.set$ref(field.getType().getComponentType().getSimpleName());
-                schema.addProperties(field.getName(), refSchema);
-            } else {
-                subSchema.setType(PluginConstants.OBJECT_TYPE);
-                setComponentsToOpenAPI(subSchema, field.getType().getDeclaredFields());
-                openAPI.getComponents().addSchemas(field.getType().getSimpleName(),subSchema);
-                Schema refSchema = new Schema();
-                refSchema.setType(field.getType().getSimpleName());
-                refSchema.set$ref(field.getType().getSimpleName());
-                schema.addProperties(field.getName(), refSchema);
-            }
-        }
-        return schema;
-
+    private String resolveCollectionGenericType(Method method) {
+        String genericTypeName = method.getGenericReturnType().getTypeName();
+        String collectionDataHolderFullType = StringUtils.substringBetween(genericTypeName, "<", ">");
+        String[] splittedFullTypeName = collectionDataHolderFullType.split("\\.");
+        return splittedFullTypeName[splittedFullTypeName.length - 1] + method.getReturnType().getSimpleName();
     }
+
 
     private Map<RequestMethodType, Set<Method>> getMethodsWithResourceMappings() {
         Map<RequestMethodType, Set<Method>> operationsMap = new HashMap<>();
-        operationsMap.put(RequestMethodType.DEFAULT, reflections.getMethodsAnnotatedWith(RequestMapping.class));
+        operationsMap.put(RequestMethodType.DEFAULT, reflections.getMethodsAnnotatedWith(RequestMapping.class).stream()
+                .filter(method -> serviceClass.getName().equals(method.getDeclaringClass().getName()))
+                .collect(Collectors.toSet()));
         // Add all get operations
-        operationsMap.put(RequestMethodType.GET, reflections.getMethodsAnnotatedWith(GetMapping.class));
+        operationsMap.put(RequestMethodType.GET, reflections.getMethodsAnnotatedWith(GetMapping.class).stream()
+                .filter(method -> serviceClass.getName().equals(method.getDeclaringClass().getName()))
+                .collect(Collectors.toSet()));
         // Add all post operations
-        operationsMap.put(RequestMethodType.POST, reflections.getMethodsAnnotatedWith(PostMapping.class));
+        operationsMap.put(RequestMethodType.POST, reflections.getMethodsAnnotatedWith(PostMapping.class).stream()
+                .filter(method -> serviceClass.getName().equals(method.getDeclaringClass().getName()))
+                .collect(Collectors.toSet()));
         // Add all put operations
-        operationsMap.put(RequestMethodType.PUT, reflections.getMethodsAnnotatedWith(PutMapping.class));
+        operationsMap.put(RequestMethodType.PUT, reflections.getMethodsAnnotatedWith(PutMapping.class).stream()
+                .filter(method -> serviceClass.getName().equals(method.getDeclaringClass().getName()))
+                .collect(Collectors.toSet()));
         // Add all delete operations
-        operationsMap.put(RequestMethodType.DELETE, reflections.getMethodsAnnotatedWith(DeleteMapping.class));
+        operationsMap.put(RequestMethodType.DELETE, reflections.getMethodsAnnotatedWith(DeleteMapping.class).stream()
+                .filter(method -> serviceClass.getName().equals(method.getDeclaringClass().getName()))
+                .collect(Collectors.toSet()));
         // Add all patch operations
-        operationsMap.put(RequestMethodType.PATCH, reflections.getMethodsAnnotatedWith(PatchMapping.class));
+        operationsMap.put(RequestMethodType.PATCH, reflections.getMethodsAnnotatedWith(PatchMapping.class).stream()
+                .filter(method -> serviceClass.getName().equals(method.getDeclaringClass().getName()))
+                .collect(Collectors.toSet()));
+        return operationsMap;
+    }
+
+    private Map<RequestMethodType, Set<Method>> getMethodsWithResourceMappingsForCompositeService() {
+        Map<RequestMethodType, Set<Method>> operationsMap = new HashMap<>();
+        operationsMap.put(RequestMethodType.DEFAULT, reflections.getMethodsAnnotatedWith(RequestMapping.class).stream()
+                .filter(method -> compositeServiceClasses.contains(method.getDeclaringClass()))
+                .collect(Collectors.toSet()));
+        // Add all get operations
+        operationsMap.put(RequestMethodType.GET, reflections.getMethodsAnnotatedWith(GetMapping.class).stream()
+                .filter(method -> compositeServiceClasses.contains(method.getDeclaringClass()))
+                .collect(Collectors.toSet()));
+        // Add all post operations
+        operationsMap.put(RequestMethodType.POST, reflections.getMethodsAnnotatedWith(PostMapping.class).stream()
+                .filter(method -> compositeServiceClasses.contains(method.getDeclaringClass()))
+                .collect(Collectors.toSet()));
+        // Add all put operations
+        operationsMap.put(RequestMethodType.PUT, reflections.getMethodsAnnotatedWith(PutMapping.class).stream()
+                .filter(method -> compositeServiceClasses.contains(method.getDeclaringClass()))
+                .collect(Collectors.toSet()));
+        // Add all delete operations
+        operationsMap.put(RequestMethodType.DELETE, reflections.getMethodsAnnotatedWith(DeleteMapping.class).stream()
+                .filter(method -> compositeServiceClasses.contains(method.getDeclaringClass()))
+                .collect(Collectors.toSet()));
+        // Add all patch operations
+        operationsMap.put(RequestMethodType.PATCH, reflections.getMethodsAnnotatedWith(PatchMapping.class).stream()
+                .filter(method -> compositeServiceClasses.contains(method.getDeclaringClass()))
+                .collect(Collectors.toSet()));
         return operationsMap;
     }
 
     private String resolveBasicDataType(String dataType) {
-        switch (dataType){
+        switch (dataType) {
         case "boolean":
             return PluginConstants.BOOLEAN_TYPE;
         case "int":
@@ -232,10 +290,11 @@ public class OpenAPIServiceMapper {
     }
 
     private ResourceMapperModel buildRequestMapperFromDelete(DeleteMapping deleteMappingAnnotation) {
-        return new ResourceMapperModel.Builder(deleteMappingAnnotation.name()).headers(deleteMappingAnnotation.headers())
-                .consumes(deleteMappingAnnotation.consumes()).method(new RequestMethod[] { RequestMethod.DELETE })
-                .params(deleteMappingAnnotation.params()).path(deleteMappingAnnotation.path())
-                .produces(deleteMappingAnnotation.produces()).value(deleteMappingAnnotation.value()).build();
+        return new ResourceMapperModel.Builder(deleteMappingAnnotation.name())
+                .headers(deleteMappingAnnotation.headers()).consumes(deleteMappingAnnotation.consumes())
+                .method(new RequestMethod[] { RequestMethod.DELETE }).params(deleteMappingAnnotation.params())
+                .path(deleteMappingAnnotation.path()).produces(deleteMappingAnnotation.produces())
+                .value(deleteMappingAnnotation.value()).build();
     }
 
     private ResourceMapperModel buildRequestMapperFromPatch(PatchMapping patchMappingAnnotation) {

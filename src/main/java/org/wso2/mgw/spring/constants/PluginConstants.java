@@ -12,6 +12,7 @@ public class PluginConstants {
     public static final String STRING_TYPE = "string";
     public static final String INTEGER_TYPE = "integer";
     public static final String BOOLEAN_TYPE = "boolean";
+    public static final String FILE_TYPE = "file";
 
     public static final String BASE_PATH = "x-wso2-basePath";
 }

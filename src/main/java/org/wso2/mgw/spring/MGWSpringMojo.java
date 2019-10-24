@@ -12,6 +12,7 @@ import org.wso2.mgw.spring.constants.CLIConstants;
 import org.wso2.mgw.spring.exception.CLIExecutorException;
 import org.wso2.mgw.spring.exception.OpenAPIBuilderException;
 import org.wso2.mgw.spring.models.ConfigModel;
+import org.wso2.mgw.spring.utils.ConverterUtils;
 
 import java.util.List;
 
